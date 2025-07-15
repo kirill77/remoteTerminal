@@ -8,9 +8,7 @@
 #include <ws2tcpip.h>
 #include <string>
 #include <cstdio>
-
-#define DEFAULT_BUFLEN 4096
-#define DEFAULT_PORT "27015"
+#include "../common.h"
 
 class RemoteTerminalClient {
 private:
@@ -107,19 +105,32 @@ public:
 
         char recvbuf[DEFAULT_BUFLEN];
         std::string response;
+        const std::string endMarker = END_OF_RESPONSE_MARKER;
 
-        // Keep receiving data until all data is received
+        // Keep receiving data until we see the end marker
         while (true) {
             int iResult = recv(ConnectSocket, recvbuf, DEFAULT_BUFLEN - 1, 0);
             if (iResult > 0) {
                 recvbuf[iResult] = '\0';
                 response += std::string(recvbuf);
+                
+                // Check if we've received the end marker
+                size_t markerPos = response.find(endMarker);
+                if (markerPos != std::string::npos) {
+                    // Remove the end marker and everything after it
+                    response = response.substr(0, markerPos);
+                    // Remove trailing newlines that were added before the marker
+                    while (!response.empty() && response.back() == '\n') {
+                        response.pop_back();
+                    }
+                    break;
+                }
             }
             else if (iResult == 0) {
                 if (response.empty()) {
                     response = "Connection closed by server";
-                    connected = false;
                 }
+                connected = false;
                 break;
             }
             else {

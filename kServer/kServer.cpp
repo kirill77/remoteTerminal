@@ -14,9 +14,7 @@
 #include <memory>
 #include <thread>
 #include <cstdio>
-
-#define DEFAULT_PORT "27015"
-#define DEFAULT_BUFLEN 4096
+#include "../common.h"
 
 class RemoteTerminalServer {
 private:
@@ -235,13 +233,16 @@ public:
 
                 // Check for exit command
                 if (command == "exit" || command == "quit") {
-                    std::string response = "Goodbye!\n";
+                    std::string response = "Goodbye!\n" END_OF_RESPONSE_MARKER "\n";
                     send(ClientSocket, response.c_str(), (int)response.length(), 0);
                     break;
                 }
 
                 // Execute the command
                 std::string output = executeCommand(command);
+                
+                // Add end-of-response marker
+                output += "\n" END_OF_RESPONSE_MARKER "\n";
                 
                 // Send the output back to client
                 int sendResult = send(ClientSocket, output.c_str(), (int)output.length(), 0);
