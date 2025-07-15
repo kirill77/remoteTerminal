@@ -108,19 +108,27 @@ public:
         char recvbuf[DEFAULT_BUFLEN];
         std::string response;
 
-        // Receive data from server
-        int iResult = recv(ConnectSocket, recvbuf, DEFAULT_BUFLEN - 1, 0);
-        if (iResult > 0) {
-            recvbuf[iResult] = '\0';
-            response = std::string(recvbuf);
-        }
-        else if (iResult == 0) {
-            response = "Connection closed by server";
-            connected = false;
-        }
-        else {
-            response = "recv failed with error: " + std::to_string(WSAGetLastError());
-            connected = false;
+        // Keep receiving data until all data is received
+        while (true) {
+            int iResult = recv(ConnectSocket, recvbuf, DEFAULT_BUFLEN - 1, 0);
+            if (iResult > 0) {
+                recvbuf[iResult] = '\0';
+                response += std::string(recvbuf);
+            }
+            else if (iResult == 0) {
+                if (response.empty()) {
+                    response = "Connection closed by server";
+                    connected = false;
+                }
+                break;
+            }
+            else {
+                if (response.empty()) {
+                    response = "recv failed with error: " + std::to_string(WSAGetLastError());
+                }
+                connected = false;
+                break;
+            }
         }
 
         return response;
