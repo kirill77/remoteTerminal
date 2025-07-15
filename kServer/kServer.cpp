@@ -3,9 +3,13 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+#define WIN32_LEAN_AND_MEAN
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <iostream>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 #include <string>
 #include <memory>
 #include <thread>
@@ -19,9 +23,15 @@ private:
     WSADATA wsaData;
     SOCKET ListenSocket;
     bool initialized;
+    std::string currentDirectory;
 
 public:
-    RemoteTerminalServer() : ListenSocket(INVALID_SOCKET), initialized(false) {}
+    RemoteTerminalServer() : ListenSocket(INVALID_SOCKET), initialized(false) {
+        // Get initial working directory
+        char buffer[MAX_PATH];
+        GetCurrentDirectoryA(MAX_PATH, buffer);
+        currentDirectory = std::string(buffer);
+    }
 
     ~RemoteTerminalServer() {
         cleanup();
@@ -85,8 +95,95 @@ public:
         return true;
     }
 
+    bool handleCdCommand(const std::string& command) {
+        // remove slashes at the end
+        while (*currentDirectory.rbegin() == '\\')
+        {
+            currentDirectory.pop_back();
+        }
+
+        // Check if this is a cd command
+        if (command.length() >= 2 && command.substr(0, 2) == "cd") {
+            std::string targetDir;
+            
+            if (command.length() == 2) {
+                // Just "cd" - go to user's home directory
+                char* userProfile = getenv("USERPROFILE");
+                if (userProfile) {
+                    targetDir = std::string(userProfile);
+                } else {
+                    targetDir = "C:\\";
+                }
+            } else if (command.length() > 3 && command[2] == ' ') {
+                // "cd <path>"
+                targetDir = command.substr(3);
+                
+                // Remove quotes if present
+                if (targetDir.front() == '"' && targetDir.back() == '"') {
+                    targetDir = targetDir.substr(1, targetDir.length() - 2);
+                }
+                
+                // Handle relative paths
+                if (targetDir[0] != '\\' && (targetDir.length() < 2 || targetDir[1] != ':')) {
+                    // It's a relative path, combine with current directory
+                    if (targetDir == "..") {
+                        // Go up one directory
+                        size_t lastSlash = currentDirectory.find_last_of("\\");
+                        if (lastSlash != std::string::npos && lastSlash >= 2) { // Don't go above drive root
+                            targetDir = currentDirectory.substr(0, lastSlash);
+                        } else {
+                            targetDir = currentDirectory; // Already at root
+                        }
+                    } else if (targetDir == ".") {
+                        // Stay in current directory
+                        targetDir = currentDirectory;
+                    } else {
+                        // Relative path
+                        targetDir = currentDirectory + "\\" + targetDir;
+                    }
+                }
+            } else {
+                return false; // Not a valid cd command
+            }
+
+            // add slashes at the end
+            if (*targetDir.rbegin() != '\\')
+            {
+                targetDir.push_back('\\');
+            }
+
+            // Try to change directory
+            if (SetCurrentDirectoryA(targetDir.c_str())) {
+                currentDirectory = targetDir;
+                return true;
+            } else {
+                return false; // Failed to change directory
+            }
+        }
+        return false; // Not a cd command
+    }
+
     std::string executeCommand(const std::string& command) {
         std::string result;
+        
+        // Handle cd commands specially
+        if (handleCdCommand(command)) {
+            char buffer[MAX_PATH];
+            GetCurrentDirectoryA(MAX_PATH, buffer);
+            currentDirectory = std::string(buffer);
+            return std::string(buffer) + "\n";
+        } else if (command.length() >= 2 && command.substr(0, 2) == "cd") {
+            // cd command that failed
+            return "The system cannot find the path specified.\n";
+        }
+        
+        // Handle pwd command (show current directory)
+        if (command == "pwd") {
+            return currentDirectory + "\n";
+        }
+        
+        // For all other commands, ensure we're in the right directory
+        SetCurrentDirectoryA(currentDirectory.c_str());
         
         // Use _popen to execute command and capture output
         FILE* pipe = _popen(command.c_str(), "r");
