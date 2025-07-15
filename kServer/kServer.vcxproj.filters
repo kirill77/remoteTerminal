@@ -18,5 +18,13 @@
     <ClCompile Include="kServer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="PersistentShell.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="PersistentShell.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

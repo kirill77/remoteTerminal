@@ -129,6 +129,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="kServer.cpp" />
+    <ClCompile Include="PersistentShell.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="PersistentShell.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
