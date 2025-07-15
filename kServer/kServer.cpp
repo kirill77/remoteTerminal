@@ -22,16 +22,30 @@ private:
     SOCKET ListenSocket;
     bool initialized;
     std::string currentDirectory;
+    
+    // Persistent shell session
+    HANDLE hChildStdInRd, hChildStdInWr;
+    HANDLE hChildStdOutRd, hChildStdOutWr;
+    HANDLE hChildStdErrRd, hChildStdErrWr;
+    PROCESS_INFORMATION piProcInfo;
+    bool shellActive;
 
 public:
-    RemoteTerminalServer() : ListenSocket(INVALID_SOCKET), initialized(false) {
+    RemoteTerminalServer() : ListenSocket(INVALID_SOCKET), initialized(false), shellActive(false) {
         // Get initial working directory
         char buffer[MAX_PATH];
         GetCurrentDirectoryA(MAX_PATH, buffer);
         currentDirectory = std::string(buffer);
+        
+        // Initialize pipe handles
+        hChildStdInRd = hChildStdInWr = NULL;
+        hChildStdOutRd = hChildStdOutWr = NULL;
+        hChildStdErrRd = hChildStdErrWr = NULL;
+        ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
     }
 
     ~RemoteTerminalServer() {
+        destroyPersistentShell();
         cleanup();
     }
 
@@ -93,118 +107,187 @@ public:
         return true;
     }
 
-    bool handleCdCommand(const std::string& command) {
-        // remove slashes at the end
-        while (*currentDirectory.rbegin() == '\\')
-        {
-            currentDirectory.pop_back();
+
+
+    bool createPersistentShell() {
+        SECURITY_ATTRIBUTES saAttr;
+        saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+        saAttr.bInheritHandle = TRUE;
+        saAttr.lpSecurityDescriptor = NULL;
+
+        // Create pipes for stdin
+        if (!CreatePipe(&hChildStdInRd, &hChildStdInWr, &saAttr, 0)) {
+            printf("CreatePipe failed for stdin\n");
+            return false;
+        }
+        if (!SetHandleInformation(hChildStdInWr, HANDLE_FLAG_INHERIT, 0)) {
+            printf("SetHandleInformation failed for stdin\n");
+            return false;
         }
 
-        // Check if this is a cd command
-        if (command.length() >= 2 && command.substr(0, 2) == "cd") {
-            std::string targetDir;
-            
-            if (command.length() == 2) {
-                // Just "cd" - go to user's home directory
-                char* userProfile = getenv("USERPROFILE");
-                if (userProfile) {
-                    targetDir = std::string(userProfile);
-                } else {
-                    targetDir = "C:\\";
-                }
-            } else if (command.length() > 3 && command[2] == ' ') {
-                // "cd <path>"
-                targetDir = command.substr(3);
-                
-                // Remove quotes if present
-                if (targetDir.front() == '"' && targetDir.back() == '"') {
-                    targetDir = targetDir.substr(1, targetDir.length() - 2);
-                }
-                
-                // Handle relative paths
-                if (targetDir[0] != '\\' && (targetDir.length() < 2 || targetDir[1] != ':')) {
-                    // It's a relative path, combine with current directory
-                    if (targetDir == "..") {
-                        // Go up one directory
-                        size_t lastSlash = currentDirectory.find_last_of("\\");
-                        if (lastSlash != std::string::npos && lastSlash >= 2) { // Don't go above drive root
-                            targetDir = currentDirectory.substr(0, lastSlash);
-                        } else {
-                            targetDir = currentDirectory; // Already at root
-                        }
-                    } else if (targetDir == ".") {
-                        // Stay in current directory
-                        targetDir = currentDirectory;
-                    } else {
-                        // Relative path
-                        targetDir = currentDirectory + "\\" + targetDir;
-                    }
-                }
-            } else {
-                return false; // Not a valid cd command
-            }
-
-            // add slashes at the end
-            if (*targetDir.rbegin() != '\\')
-            {
-                targetDir.push_back('\\');
-            }
-
-            // Try to change directory
-            if (SetCurrentDirectoryA(targetDir.c_str())) {
-                currentDirectory = targetDir;
-                return true;
-            } else {
-                return false; // Failed to change directory
-            }
+        // Create pipes for stdout
+        if (!CreatePipe(&hChildStdOutRd, &hChildStdOutWr, &saAttr, 0)) {
+            printf("CreatePipe failed for stdout\n");
+            return false;
         }
-        return false; // Not a cd command
+        if (!SetHandleInformation(hChildStdOutRd, HANDLE_FLAG_INHERIT, 0)) {
+            printf("SetHandleInformation failed for stdout\n");
+            return false;
+        }
+
+        // Create pipes for stderr
+        if (!CreatePipe(&hChildStdErrRd, &hChildStdErrWr, &saAttr, 0)) {
+            printf("CreatePipe failed for stderr\n");
+            return false;
+        }
+        if (!SetHandleInformation(hChildStdErrRd, HANDLE_FLAG_INHERIT, 0)) {
+            printf("SetHandleInformation failed for stderr\n");
+            return false;
+        }
+
+        // Create the child process (cmd.exe)
+        STARTUPINFOA siStartInfo;
+        ZeroMemory(&siStartInfo, sizeof(STARTUPINFO));
+        siStartInfo.cb = sizeof(STARTUPINFO);
+        siStartInfo.hStdError = hChildStdErrWr;
+        siStartInfo.hStdOutput = hChildStdOutWr;
+        siStartInfo.hStdInput = hChildStdInRd;
+        siStartInfo.dwFlags |= STARTF_USESTDHANDLES;
+
+        // Start cmd.exe
+        char cmdLine[] = "cmd.exe";
+        BOOL bSuccess = CreateProcessA(NULL,
+            cmdLine,     // command line
+            NULL,        // process security attributes
+            NULL,        // primary thread security attributes
+            TRUE,        // handles are inherited
+            0,           // creation flags
+            NULL,        // use parent's environment
+            currentDirectory.c_str(), // current directory
+            &siStartInfo, // STARTUPINFO pointer
+            &piProcInfo); // receives PROCESS_INFORMATION
+
+        if (!bSuccess) {
+            printf("CreateProcess failed for cmd.exe\n");
+            return false;
+        }
+
+        // Close handles to the stdin and stdout pipes no longer needed by the child process.
+        CloseHandle(hChildStdOutWr);
+        CloseHandle(hChildStdInRd);
+        CloseHandle(hChildStdErrWr);
+        hChildStdOutWr = NULL;
+        hChildStdInRd = NULL;
+        hChildStdErrWr = NULL;
+
+        shellActive = true;
+        printf("Persistent shell created\n");
+        return true;
+    }
+
+    void destroyPersistentShell() {
+        if (!shellActive) return;
+
+        // Send exit command to terminate cmd.exe gracefully
+        if (hChildStdInWr) {
+            const char* exitCmd = "exit\r\n";
+            DWORD dwWritten;
+            WriteFile(hChildStdInWr, exitCmd, (DWORD)strlen(exitCmd), &dwWritten, NULL);
+            CloseHandle(hChildStdInWr);
+            hChildStdInWr = NULL;
+        }
+
+        // Wait for process to terminate
+        if (piProcInfo.hProcess) {
+            WaitForSingleObject(piProcInfo.hProcess, 2000); // Wait up to 2 seconds
+            CloseHandle(piProcInfo.hProcess);
+            CloseHandle(piProcInfo.hThread);
+        }
+
+        // Close remaining handles
+        if (hChildStdOutRd) { CloseHandle(hChildStdOutRd); hChildStdOutRd = NULL; }
+        if (hChildStdErrRd) { CloseHandle(hChildStdErrRd); hChildStdErrRd = NULL; }
+        if (hChildStdInRd) { CloseHandle(hChildStdInRd); hChildStdInRd = NULL; }
+        if (hChildStdOutWr) { CloseHandle(hChildStdOutWr); hChildStdOutWr = NULL; }
+        if (hChildStdErrWr) { CloseHandle(hChildStdErrWr); hChildStdErrWr = NULL; }
+
+        shellActive = false;
+        printf("Persistent shell destroyed\n");
     }
 
     std::string executeCommand(const std::string& command) {
-        std::string result;
-        
-        // Handle cd commands specially
-        if (handleCdCommand(command)) {
-            char buffer[MAX_PATH];
-            GetCurrentDirectoryA(MAX_PATH, buffer);
-            currentDirectory = std::string(buffer);
-            return std::string(buffer) + "\n";
-        } else if (command.length() >= 2 && command.substr(0, 2) == "cd") {
-            // cd command that failed
-            return "The system cannot find the path specified.\n";
+        if (!shellActive) {
+            return "Error: Persistent shell not active\n";
         }
-        
-        // Handle pwd command (show current directory)
+
+        // Handle pwd command (show current directory) - send to shell
+        std::string actualCommand = command;
         if (command == "pwd") {
-            return currentDirectory + "\n";
-        }
-        
-        // For all other commands, ensure we're in the right directory
-        SetCurrentDirectoryA(currentDirectory.c_str());
-        
-        // Use _popen to execute command and capture output
-        FILE* pipe = _popen(command.c_str(), "r");
-        if (!pipe) {
-            return "Error: Could not execute command\n";
+            actualCommand = "cd";  // cmd.exe's cd without arguments shows current directory
         }
 
-        char buffer[256];
-        while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-            result += buffer;
+        // Write command to shell's stdin
+        std::string cmdWithNewline = actualCommand + "\r\n";
+        DWORD dwWritten;
+        if (!WriteFile(hChildStdInWr, cmdWithNewline.c_str(), (DWORD)cmdWithNewline.length(), &dwWritten, NULL)) {
+            return "Error: Failed to write command to shell\n";
         }
 
-        int exitCode = _pclose(pipe);
+        // Read output from shell
+        std::string result;
+        char buffer[4096];
+        DWORD dwRead;
         
-        if (result.empty()) {
-            if (exitCode == 0) {
-                result = "Command executed successfully (no output)\n";
-            } else {
-                result = "Command failed with exit code: " + std::to_string(exitCode) + "\n";
+        // Set a timeout for reading
+        DWORD timeout = 5000; // 5 seconds
+        DWORD startTime = GetTickCount();
+        
+        while (GetTickCount() - startTime < timeout) {
+            // Check if data is available
+            DWORD bytesAvailable = 0;
+            if (PeekNamedPipe(hChildStdOutRd, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
+                if (ReadFile(hChildStdOutRd, buffer, sizeof(buffer) - 1, &dwRead, NULL) && dwRead > 0) {
+                    buffer[dwRead] = '\0';
+                    result += buffer;
+                    
+                    // Check if we've reached a command prompt (indicating command completion)
+                    if (result.find(">") != std::string::npos) {
+                        // Look for the last occurrence of ">" which should be the prompt
+                        size_t lastPrompt = result.rfind(">");
+                        if (lastPrompt != std::string::npos) {
+                            // Extract everything before the prompt
+                            std::string output = result.substr(0, lastPrompt);
+                            
+                            // Remove the command echo (first line)
+                            size_t firstNewline = output.find("\r\n");
+                            if (firstNewline != std::string::npos) {
+                                output = output.substr(firstNewline + 2);
+                            }
+                            
+                            // Clean up trailing whitespace
+                            while (!output.empty() && (output.back() == '\r' || output.back() == '\n' || output.back() == ' ')) {
+                                output.pop_back();
+                            }
+                            
+                            return output.empty() ? "Command executed successfully (no output)\n" : output + "\n";
+                        }
+                    }
+                }
             }
+            
+            // Also check stderr
+            if (PeekNamedPipe(hChildStdErrRd, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
+                if (ReadFile(hChildStdErrRd, buffer, sizeof(buffer) - 1, &dwRead, NULL) && dwRead > 0) {
+                    buffer[dwRead] = '\0';
+                    result += buffer;
+                }
+            }
+            
+            Sleep(10); // Small delay to prevent busy waiting
         }
 
-        return result;
+        // If we get here, we timed out
+        return "Error: Command execution timed out\n";
     }
 
     void handleClient(SOCKET ClientSocket) {
@@ -212,6 +295,15 @@ public:
         int recvbuflen = DEFAULT_BUFLEN;
 
         printf("Client connected\n");
+        
+        // Create persistent shell for this client session
+        if (!createPersistentShell()) {
+            printf("Failed to create persistent shell for client\n");
+            std::string errorResponse = "Error: Failed to initialize shell session\n" END_OF_RESPONSE_MARKER "\n";
+            send(ClientSocket, errorResponse.c_str(), (int)errorResponse.length(), 0);
+            closesocket(ClientSocket);
+            return;
+        }
 
         while (true) {
             // Receive data from client
@@ -261,6 +353,9 @@ public:
             }
         }
 
+        // Cleanup persistent shell when client disconnects
+        destroyPersistentShell();
+        
         closesocket(ClientSocket);
         printf("Client connection closed\n");
     }
