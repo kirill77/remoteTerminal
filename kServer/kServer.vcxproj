@@ -130,9 +130,11 @@
   <ItemGroup>
     <ClCompile Include="kServer.cpp" />
     <ClCompile Include="PersistentShell.cpp" />
+    <ClCompile Include="RemoteTerminalServer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="PersistentShell.h" />
+    <ClInclude Include="RemoteTerminalServer.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

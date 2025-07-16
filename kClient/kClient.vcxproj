@@ -129,6 +129,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="kClient.cpp" />
+    <ClCompile Include="RemoteTerminalClient.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="RemoteTerminalClient.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
