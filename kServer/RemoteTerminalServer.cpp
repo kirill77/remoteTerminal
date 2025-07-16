@@ -83,9 +83,9 @@ void RemoteTerminalServer::continuousOutputMonitor(SOCKET clientSocket, Persiste
         
         if (!output.empty()) {
             // Add timestamp prefix to the output
-            std::string timestampedOutput = getCurrentTimestamp() + output;
+            std::string timestampedOutput = getCurrentTimestamp() + output + END_OF_RESPONSE_MARKER;
             
-            // Send the output to client immediately (no end marker for streaming)
+            // Send the output to client immediately
             int sendResult = send(clientSocket, timestampedOutput.c_str(), (int)timestampedOutput.length(), 0);
             if (sendResult == SOCKET_ERROR) {
                 printf("Failed to send output to client: %d\n", WSAGetLastError());
