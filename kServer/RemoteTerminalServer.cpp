@@ -1,10 +1,6 @@
 #include "RemoteTerminalServer.h"
 
 RemoteTerminalServer::RemoteTerminalServer() : ListenSocket(INVALID_SOCKET), initialized(false) {
-    // Get initial working directory
-    char buffer[MAX_PATH];
-    GetCurrentDirectoryA(MAX_PATH, buffer);
-    currentDirectory = std::string(buffer);
 }
 
 RemoteTerminalServer::~RemoteTerminalServer() {
@@ -118,9 +114,13 @@ void RemoteTerminalServer::handleClient(SOCKET ClientSocket) {
     int recvbuflen = DEFAULT_BUFLEN;
 
     printf("Client connected\n");
-    
+
+    // Get initial working directory
+    char sServerCurDir[MAX_PATH];
+    GetCurrentDirectoryA(MAX_PATH, sServerCurDir);
+
     // Create persistent shell for this client session
-    PersistentShell shell(currentDirectory);
+    PersistentShell shell(sServerCurDir);
     if (!shell.isActive()) {
         printf("Failed to create persistent shell for client\n");
         std::string errorResponse = "Error: Failed to initialize shell session\n" END_OF_RESPONSE_MARKER "\n";

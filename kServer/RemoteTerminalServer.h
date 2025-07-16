@@ -24,7 +24,6 @@ private:
     WSADATA wsaData;
     SOCKET ListenSocket;
     bool initialized;
-    std::string currentDirectory;
 
     void continuousOutputMonitor(SOCKET clientSocket, PersistentShell& shell, std::atomic<bool>& shouldStop);
     std::string getCurrentTimestamp();
