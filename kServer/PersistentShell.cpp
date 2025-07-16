@@ -85,67 +85,6 @@ std::string PersistentShell::readAvailableOutput() {
     return result;
 }
 
-std::string PersistentShell::receiveOutput(DWORD timeoutMs) {
-    if (!shellActive) {
-        return "Error: Persistent shell not active\n";
-    }
-
-    // Read output from shell
-    std::string result;
-    char buffer[4096];
-    DWORD dwRead;
-    
-    // Set a timeout for reading
-    DWORD startTime = GetTickCount();
-    
-    while (GetTickCount() - startTime < timeoutMs) {
-        // Check if data is available
-        DWORD bytesAvailable = 0;
-        if (PeekNamedPipe(hChildStdOutRd, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
-            if (ReadFile(hChildStdOutRd, buffer, sizeof(buffer) - 1, &dwRead, NULL) && dwRead > 0) {
-                buffer[dwRead] = '\0';
-                result += buffer;
-                
-                // Check if we've reached a command prompt (indicating command completion)
-                if (result.find(">") != std::string::npos) {
-                    // Look for the last occurrence of ">" which should be the prompt
-                    size_t lastPrompt = result.rfind(">");
-                    if (lastPrompt != std::string::npos) {
-                        // Extract everything before the prompt
-                        std::string output = result.substr(0, lastPrompt);
-                        
-                        // Remove the command echo (first line)
-                        size_t firstNewline = output.find("\r\n");
-                        if (firstNewline != std::string::npos) {
-                            output = output.substr(firstNewline + 2);
-                        }
-                        
-                        // Clean up trailing whitespace
-                        while (!output.empty() && (output.back() == '\r' || output.back() == '\n' || output.back() == ' ')) {
-                            output.pop_back();
-                        }
-                        
-                        return output.empty() ? "Command executed successfully (no output)\n" : output + "\n";
-                    }
-                }
-            }
-        }
-        
-        // Also check stderr
-        if (PeekNamedPipe(hChildStdErrRd, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
-            if (ReadFile(hChildStdErrRd, buffer, sizeof(buffer) - 1, &dwRead, NULL) && dwRead > 0) {
-                buffer[dwRead] = '\0';
-                result += buffer;
-            }
-        }
-        
-        Sleep(10); // Small delay to prevent busy waiting
-    }
-
-    // If we get here, we timed out
-    return "Error: Command execution timed out\n";
-}
-
 bool PersistentShell::initialize() {
     SECURITY_ATTRIBUTES saAttr;
     saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);

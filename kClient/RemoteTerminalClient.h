@@ -28,6 +28,7 @@ private:
 
     bool sendCommand(const std::string& command);
     void cleanup();
+    void continuousReceive();
 
 public:
     RemoteTerminalClient();
@@ -35,6 +36,5 @@ public:
 
     bool initialize();
     bool connectToServer(const std::string& serverAddress = "127.0.0.1");
-    void continuousReceive();
     void run();
 }; 

@@ -26,14 +26,15 @@ private:
     bool initialized;
     std::string currentDirectory;
 
+    void continuousOutputMonitor(SOCKET clientSocket, PersistentShell& shell, std::atomic<bool>& shouldStop);
+    std::string getCurrentTimestamp();
+    void handleClient(SOCKET ClientSocket);
+    void cleanup();
+
 public:
     RemoteTerminalServer();
     ~RemoteTerminalServer();
 
     bool initialize();
-    std::string getCurrentTimestamp();
-    void continuousOutputMonitor(SOCKET clientSocket, PersistentShell& shell, std::atomic<bool>& shouldStop);
-    void handleClient(SOCKET ClientSocket);
     void run();
-    void cleanup();
 }; 
