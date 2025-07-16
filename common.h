@@ -7,4 +7,4 @@
 #define DEFAULT_BUFLEN 4096
 
 // End-of-response marker for message delimiting
-#define END_OF_RESPONSE_MARKER "<<END_OF_RESPONSE>>" 
+#define END_OF_RESPONSE_MARKER "\n<<END_OF_RESPONSE>>\n" 

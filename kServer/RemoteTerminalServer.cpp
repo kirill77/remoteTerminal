@@ -123,7 +123,7 @@ void RemoteTerminalServer::handleClient(SOCKET ClientSocket) {
     PersistentShell shell(sServerCurDir);
     if (!shell.isActive()) {
         printf("Failed to create persistent shell for client\n");
-        std::string errorResponse = "Error: Failed to initialize shell session\n" END_OF_RESPONSE_MARKER "\n";
+        std::string errorResponse = "Error: Failed to initialize shell session" END_OF_RESPONSE_MARKER;
         send(ClientSocket, errorResponse.c_str(), (int)errorResponse.length(), 0);
         closesocket(ClientSocket);
         return;
@@ -131,7 +131,7 @@ void RemoteTerminalServer::handleClient(SOCKET ClientSocket) {
 
     // Send welcome message immediately
     std::string welcomeMessage = getCurrentTimestamp() + "Welcome to Remote Terminal Server!\n" + 
-                               getCurrentTimestamp() + "Shell session initialized.\n" + END_OF_RESPONSE_MARKER + "\n";
+                               getCurrentTimestamp() + "Shell session initialized." + END_OF_RESPONSE_MARKER;
     send(ClientSocket, welcomeMessage.c_str(), (int)welcomeMessage.length(), 0);
 
     // Start continuous output monitoring thread
@@ -167,14 +167,14 @@ void RemoteTerminalServer::handleClient(SOCKET ClientSocket) {
                     Sleep(500);
                 }
                 
-                std::string response = "Goodbye!\n" END_OF_RESPONSE_MARKER "\n";
+                std::string response = "Goodbye!" END_OF_RESPONSE_MARKER;
                 send(ClientSocket, response.c_str(), (int)response.length(), 0);
                 break;
             }
 
             // Send the command to shell (non-blocking)
             if (!shell.sendCommand(command)) {
-                std::string errorResponse = getCurrentTimestamp() + "Error: Failed to send command to shell\n" + END_OF_RESPONSE_MARKER + "\n";
+                std::string errorResponse = getCurrentTimestamp() + "Error: Failed to send command to shell" + END_OF_RESPONSE_MARKER;
                 send(ClientSocket, errorResponse.c_str(), (int)errorResponse.length(), 0);
             }
             // Note: Output will be handled by the monitoring thread

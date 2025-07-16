@@ -11,11 +11,7 @@
 #include <atomic>
 #include <mutex>
 #include <chrono>
-
-// Constants that were in common.h
-#define DEFAULT_PORT "27015"
-#define DEFAULT_BUFLEN 512
-#define END_OF_RESPONSE_MARKER "\n<<EOF>>\n"
+#include "../common.h"
 
 class RemoteTerminalClient {
 private:
@@ -27,8 +23,8 @@ private:
     std::mutex outputMutex;
 
     bool sendCommand(const std::string& command);
-    void cleanup();
     void continuousReceive();
+    void cleanup();
 
 public:
     RemoteTerminalClient();
