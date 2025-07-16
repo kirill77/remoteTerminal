@@ -12,6 +12,8 @@
 #include <string>
 #include <memory>
 #include <thread>
+#include <atomic>
+#include <mutex>
 #include <cstdio>
 #include <ctime>
 #include "../common.h"
@@ -30,7 +32,7 @@ public:
 
     bool initialize();
     std::string getCurrentTimestamp();
-    std::string executeCommand(PersistentShell& shell, const std::string& command);
+    void continuousOutputMonitor(SOCKET clientSocket, PersistentShell& shell, std::atomic<bool>& shouldStop);
     void handleClient(SOCKET ClientSocket);
     void run();
     void cleanup();

@@ -23,4 +23,5 @@ public:
     bool isActive() const;
     bool sendCommand(const std::string& command);
     std::string receiveOutput(DWORD timeoutMs = 5000);
+    std::string readAvailableOutput(); // New method for streaming
 }; 

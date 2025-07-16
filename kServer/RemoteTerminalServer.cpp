@@ -78,19 +78,39 @@ std::string RemoteTerminalServer::getCurrentTimestamp() {
     return std::string(buffer);
 }
 
-std::string RemoteTerminalServer::executeCommand(PersistentShell& shell, const std::string& command) {
-    if (!shell.isActive()) {
-        return getCurrentTimestamp() + "Error: Shell not active\n";
-    }
-
-    if (!shell.sendCommand(command)) {
-        return getCurrentTimestamp() + "Error: Failed to send command to shell\n";
-    }
-
-    std::string output = shell.receiveOutput();
+void RemoteTerminalServer::continuousOutputMonitor(SOCKET clientSocket, PersistentShell& shell, std::atomic<bool>& shouldStop) {
+    printf("Output monitoring thread started\n");
     
-    // Add timestamp prefix to the output
-    return getCurrentTimestamp() + output;
+    while (!shouldStop && shell.isActive()) {
+        // Read any available output from the shell (non-blocking)
+        std::string output = shell.readAvailableOutput();
+        
+        if (!output.empty()) {
+            // Add timestamp prefix to the output
+            std::string timestampedOutput = getCurrentTimestamp() + output;
+            
+            // Send the output to client immediately (no end marker for streaming)
+            int sendResult = send(clientSocket, timestampedOutput.c_str(), (int)timestampedOutput.length(), 0);
+            if (sendResult == SOCKET_ERROR) {
+                printf("Failed to send output to client: %d\n", WSAGetLastError());
+                break;
+            }
+            
+            // Log what we sent (but clean it up for display)
+            std::string cleanOutput = output;
+            while (!cleanOutput.empty() && (cleanOutput.back() == '\r' || cleanOutput.back() == '\n')) {
+                cleanOutput.pop_back();
+            }
+            if (!cleanOutput.empty()) {
+                printf("Sent output to client: %s\n", cleanOutput.c_str());
+            }
+        }
+        
+        // Small sleep to prevent excessive CPU usage when no output is available
+        Sleep(50);
+    }
+    
+    printf("Output monitoring thread ended\n");
 }
 
 void RemoteTerminalServer::handleClient(SOCKET ClientSocket) {
@@ -109,10 +129,15 @@ void RemoteTerminalServer::handleClient(SOCKET ClientSocket) {
         return;
     }
 
-    // Send welcome message immediately (demonstrates async capability)
+    // Send welcome message immediately
     std::string welcomeMessage = getCurrentTimestamp() + "Welcome to Remote Terminal Server!\n" + 
                                getCurrentTimestamp() + "Shell session initialized.\n" + END_OF_RESPONSE_MARKER + "\n";
     send(ClientSocket, welcomeMessage.c_str(), (int)welcomeMessage.length(), 0);
+
+    // Start continuous output monitoring thread
+    std::atomic<bool> shouldStopMonitoring(false);
+    std::thread outputMonitorThread(&RemoteTerminalServer::continuousOutputMonitor, this, 
+                                   ClientSocket, std::ref(shell), std::ref(shouldStopMonitoring));
 
     while (true) {
         // Receive data from client
@@ -134,23 +159,25 @@ void RemoteTerminalServer::handleClient(SOCKET ClientSocket) {
 
             // Check for exit command
             if (command == "exit" || command == "quit") {
+                shouldStopMonitoring = true;
+                
+                // Send the exit command to shell
+                if (shell.sendCommand(command)) {
+                    // Wait a moment for any final output
+                    Sleep(500);
+                }
+                
                 std::string response = "Goodbye!\n" END_OF_RESPONSE_MARKER "\n";
                 send(ClientSocket, response.c_str(), (int)response.length(), 0);
                 break;
             }
 
-            // Execute the command
-            std::string output = executeCommand(shell, command);
-            
-            // Add end-of-response marker
-            output += "\n" END_OF_RESPONSE_MARKER "\n";
-            
-            // Send the output back to client
-            int sendResult = send(ClientSocket, output.c_str(), (int)output.length(), 0);
-            if (sendResult == SOCKET_ERROR) {
-                printf("send failed with error: %d\n", WSAGetLastError());
-                break;
+            // Send the command to shell (non-blocking)
+            if (!shell.sendCommand(command)) {
+                std::string errorResponse = getCurrentTimestamp() + "Error: Failed to send command to shell\n" + END_OF_RESPONSE_MARKER + "\n";
+                send(ClientSocket, errorResponse.c_str(), (int)errorResponse.length(), 0);
             }
+            // Note: Output will be handled by the monitoring thread
         }
         else if (iResult == 0) {
             printf("Client disconnected\n");
@@ -160,6 +187,12 @@ void RemoteTerminalServer::handleClient(SOCKET ClientSocket) {
             printf("recv failed with error: %d\n", WSAGetLastError());
             break;
         }
+    }
+
+    // Stop the monitoring thread
+    shouldStopMonitoring = true;
+    if (outputMonitorThread.joinable()) {
+        outputMonitorThread.join();
     }
 
     // Shell will be automatically destroyed when it goes out of scope

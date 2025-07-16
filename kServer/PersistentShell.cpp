@@ -52,6 +52,39 @@ bool PersistentShell::sendCommand(const std::string& command) {
     return true;
 }
 
+std::string PersistentShell::readAvailableOutput() {
+    if (!shellActive) {
+        return "";
+    }
+
+    std::string result;
+    char buffer[4096];
+    DWORD dwRead;
+    DWORD bytesAvailable = 0;
+
+    // Check stdout for available data
+    if (PeekNamedPipe(hChildStdOutRd, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
+        // Read available data (up to buffer size)
+        DWORD toRead = min(bytesAvailable, sizeof(buffer) - 1);
+        if (ReadFile(hChildStdOutRd, buffer, toRead, &dwRead, NULL) && dwRead > 0) {
+            buffer[dwRead] = '\0';
+            result += std::string(buffer);
+        }
+    }
+
+    // Check stderr for available data
+    if (PeekNamedPipe(hChildStdErrRd, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
+        // Read available data (up to buffer size)
+        DWORD toRead = min(bytesAvailable, sizeof(buffer) - 1);
+        if (ReadFile(hChildStdErrRd, buffer, toRead, &dwRead, NULL) && dwRead > 0) {
+            buffer[dwRead] = '\0';
+            result += std::string(buffer);
+        }
+    }
+
+    return result;
+}
+
 std::string PersistentShell::receiveOutput(DWORD timeoutMs) {
     if (!shellActive) {
         return "Error: Persistent shell not active\n";
