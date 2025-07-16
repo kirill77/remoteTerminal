@@ -8,16 +8,23 @@
 #include <ws2tcpip.h>
 #include <string>
 #include <cstdio>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <chrono>
 #include "../common.h"
 
 class RemoteTerminalClient {
 private:
     WSADATA wsaData;
     SOCKET ConnectSocket;
-    bool connected;
+    std::atomic<bool> connected;
+    std::atomic<bool> shouldStop;
+    std::thread receiveThread;
+    std::mutex outputMutex;
 
 public:
-    RemoteTerminalClient() : ConnectSocket(INVALID_SOCKET), connected(false) {}
+    RemoteTerminalClient() : ConnectSocket(INVALID_SOCKET), connected(false), shouldStop(false) {}
 
     ~RemoteTerminalClient() {
         cleanup();
@@ -98,52 +105,68 @@ public:
         return true;
     }
 
-    std::string receiveResponse() {
-        if (!connected) {
-            return "Error: Not connected to server";
-        }
-
+    void continuousReceive() {
         char recvbuf[DEFAULT_BUFLEN];
-        std::string response;
+        std::string buffer;
         const std::string endMarker = END_OF_RESPONSE_MARKER;
 
-        // Keep receiving data until we see the end marker
-        while (true) {
+        while (!shouldStop && connected) {
             int iResult = recv(ConnectSocket, recvbuf, DEFAULT_BUFLEN - 1, 0);
             if (iResult > 0) {
                 recvbuf[iResult] = '\0';
-                response += std::string(recvbuf);
+                buffer += std::string(recvbuf);
                 
-                // Check if we've received the end marker
-                size_t markerPos = response.find(endMarker);
-                if (markerPos != std::string::npos) {
-                    // Remove the end marker and everything after it
-                    response = response.substr(0, markerPos);
+                // Process complete messages (those ending with end marker)
+                size_t markerPos;
+                while ((markerPos = buffer.find(endMarker)) != std::string::npos) {
+                    std::string message = buffer.substr(0, markerPos);
+                    buffer = buffer.substr(markerPos + endMarker.length());
+                    
                     // Remove trailing newlines that were added before the marker
-                    while (!response.empty() && response.back() == '\n') {
-                        response.pop_back();
+                    while (!message.empty() && message.back() == '\n') {
+                        message.pop_back();
                     }
-                    break;
+                    
+                    // Thread-safe output
+                    {
+                        std::lock_guard<std::mutex> lock(outputMutex);
+                        printf("\r%s", message.c_str());
+                        if (!message.empty() && message.back() != '\n') {
+                            printf("\n");
+                        }
+                        printf("remote> ");
+                        fflush(stdout);
+                    }
                 }
             }
             else if (iResult == 0) {
-                if (response.empty()) {
-                    response = "Connection closed by server";
+                // Connection closed
+                {
+                    std::lock_guard<std::mutex> lock(outputMutex);
+                    printf("\rConnection closed by server\n");
+                    printf("remote> ");
+                    fflush(stdout);
                 }
                 connected = false;
                 break;
             }
             else {
-                if (response.empty()) {
-                    response = "recv failed with error: " + std::to_string(WSAGetLastError());
+                // Error occurred
+                if (WSAGetLastError() != WSAEWOULDBLOCK) {
+                    {
+                        std::lock_guard<std::mutex> lock(outputMutex);
+                        printf("\rReceive failed with error: %d\n", WSAGetLastError());
+                        printf("remote> ");
+                        fflush(stdout);
+                    }
+                    connected = false;
+                    break;
                 }
-                connected = false;
-                break;
             }
         }
-
-        return response;
     }
+
+
 
     void run() {
         if (!connected) {
@@ -151,48 +174,66 @@ public:
             return;
         }
 
-        printf("\nRemote Terminal Client\n");
+        printf("\nRemote Terminal Client (Async Mode)\n");
         printf("Type commands to execute on the remote server.\n");
+        printf("Responses will appear automatically as they arrive.\n");
         printf("Type 'exit' or 'quit' to disconnect.\n\n");
 
+        // Start the continuous receive thread
+        receiveThread = std::thread(&RemoteTerminalClient::continuousReceive, this);
+
         std::string command;
-        while (connected) {
-            printf("remote> ");
+        while (connected && !shouldStop) {
+            {
+                std::lock_guard<std::mutex> lock(outputMutex);
+                printf("remote> ");
+                fflush(stdout);
+            }
+            
             std::getline(std::cin, command);
 
             if (command.empty()) {
                 continue;
             }
 
-            // Send the command to server
-            if (!sendCommand(command)) {
-                break;
-            }
-
             // Check if user wants to exit
             if (command == "exit" || command == "quit") {
-                std::string response = receiveResponse();
-                printf("%s", response.c_str());
+                shouldStop = true;
+                if (!sendCommand(command)) {
+                    break;
+                }
+                // Give a moment for the exit response to arrive
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 break;
             }
 
-            // Receive and display the response
-            std::string response = receiveResponse();
-            if (!connected) {
-                printf("%s\n", response.c_str());
+            // Send the command to server (asynchronously)
+            if (!sendCommand(command)) {
+                {
+                    std::lock_guard<std::mutex> lock(outputMutex);
+                    printf("Failed to send command\n");
+                }
                 break;
             }
+        }
 
-            printf("%s", response.c_str());
-            
-            // Add extra newline if response doesn't end with one
-            if (!response.empty() && response.back() != '\n') {
-                printf("\n");
-            }
+        // Cleanup: stop the receive thread
+        shouldStop = true;
+        if (receiveThread.joinable()) {
+            receiveThread.join();
         }
     }
 
     void cleanup() {
+        // Stop the receive thread
+        shouldStop = true;
+        connected = false;
+        
+        // Join the receive thread if it's running
+        if (receiveThread.joinable()) {
+            receiveThread.join();
+        }
+        
         if (ConnectSocket != INVALID_SOCKET) {
             // Shutdown the connection
             int iResult = shutdown(ConnectSocket, SD_SEND);

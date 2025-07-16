@@ -14,6 +14,7 @@
 #include <memory>
 #include <thread>
 #include <cstdio>
+#include <ctime>
 #include "../common.h"
 #include "PersistentShell.h"
 
@@ -95,16 +96,28 @@ public:
     }
 
 
+    std::string getCurrentTimestamp() {
+        std::time_t rawtime;
+        std::time(&rawtime);
+        struct tm* timeinfo = std::localtime(&rawtime);
+        char buffer[100];
+        std::strftime(buffer, sizeof(buffer), "[%H:%M:%S] ", timeinfo);
+        return std::string(buffer);
+    }
+
     std::string executeCommand(PersistentShell& shell, const std::string& command) {
         if (!shell.isActive()) {
-            return "Error: Shell not active\n";
+            return getCurrentTimestamp() + "Error: Shell not active\n";
         }
 
         if (!shell.sendCommand(command)) {
-            return "Error: Failed to send command to shell\n";
+            return getCurrentTimestamp() + "Error: Failed to send command to shell\n";
         }
 
-        return shell.receiveOutput();
+        std::string output = shell.receiveOutput();
+        
+        // Add timestamp prefix to the output
+        return getCurrentTimestamp() + output;
     }
 
     void handleClient(SOCKET ClientSocket) {
@@ -122,6 +135,11 @@ public:
             closesocket(ClientSocket);
             return;
         }
+
+        // Send welcome message immediately (demonstrates async capability)
+        std::string welcomeMessage = getCurrentTimestamp() + "Welcome to Remote Terminal Server!\n" + 
+                                   getCurrentTimestamp() + "Shell session initialized.\n" + END_OF_RESPONSE_MARKER + "\n";
+        send(ClientSocket, welcomeMessage.c_str(), (int)welcomeMessage.length(), 0);
 
         while (true) {
             // Receive data from client
